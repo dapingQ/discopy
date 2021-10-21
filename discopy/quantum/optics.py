@@ -46,13 +46,13 @@ class Diagram(monoidal.Diagram):
 
     >>> mach = lambda x, y: PhaseShift(x) @ Id(PRO(1)) >> BeamSplitter(y)
     >>> assert np.allclose(MZI(0.4, 0.9).array, mach(0.4, 0.9).array)
-    >>> MZI(0, 0).amp(1, [1, 0], [0, 1])
+    >>> MZI(0, 0).amp([1, 0], [0, 1])
     (1+0j)
     >>> assert np.allclose((BeamSplitter(0.4) >> BeamSplitter(0.4)).array,\
                            Id(PRO(2)).array)
-    >>> grid = MZI(0.5, 0.3) @ MZI(0.5, 0.3) >> MZI(0.5, 0.3) @ MZI(0.5, 0.3)
-    >>> np.absolute(grid.amp(7, [1, 3, 2, 1], [1, 3, 3, 0])) ** 2
-    0.01503226280870989
+    >>> grid = MZI(0.5, 0.3) @ MZI(0.5, 0.3) >> Id(1) @ MZI(0.5, 0.3) @ Id(1)
+    >>> np.absolute(grid.amp([1, 3, 2, 1], [1, 3, 3, 0]))
+    0.06492701974296845
     """
     def __repr__(self):
         return super().__repr__().replace('Diagram', 'optics.Diagram')
@@ -75,15 +75,13 @@ class Diagram(monoidal.Diagram):
                                                 np.identity(right)))
         return array
 
-    def amp(self, n_photons, x, y, permanent=npperm):
+    def amp(self, x, y, permanent=npperm):
         """
         Evaluates the amplitude of an optics.Diagram on input x and output y,
         where x and y are lists of natural numbers summing to n_photons.
 
         Parameters
         ----------
-        n_photons : int
-            Number of photons
         x : List[int]
             Input vector of occupation numbers
         y : List[int]
@@ -94,30 +92,38 @@ class Diagram(monoidal.Diagram):
 
         >>> network = PhaseShift(0.4) @ Id(2) @ PhaseShift(0.5)\
                       >> MZI(0.4, 0.3) @ MZI(0.2, 0.5)
-        >>> amplitude = network.amp(2, [1, 0, 0, 1], [0, 1, 1, 0])
+        >>> amplitude = network.amp([1, 0, 0, 1], [1, 0, 1, 0])
         >>> amplitude
-        (0.2562725928380136+0.9231201340089097j)
+        (-1.53080849893419e-17+4.711344115737722e-17j)
         >>> probability = np.abs(amplitude) ** 2
         >>> probability
-        0.9178264236525457
-        >>> MZI(0, 0).amp(1, [1, 0], [0, 1])
+        2.454013803730561e-33
+        >>> MZI(0, 0).amp([1, 0], [0, 1])
         (1+0j)
-        >>> MZI(0, np.pi).amp(1, [1, 0], [1, 0])
-        (1+0j)
-        >>> MZI(0, 0).amp(2, [1, 1], [1, 0])
-        0
+        >>> MZI(0, 0).amp([1, 0], [1, 0])
+        0j
         """
         if sum(x) != sum(y):
             return 0
         n_modes = len(self.dom)
-        unitary = self.array
-        matrix = np.stack([unitary[:, i] for i in range(n_modes)
-                          for j in range(y[i])], axis=1)
+        matrix = np.stack([self.array[:, i] for i in range(n_modes)
+                          for _ in range(y[i])], axis=1)
         matrix = np.stack([matrix[i] for i in range(n_modes)
-                          for j in range(x[i])], axis=0)
+                          for _ in range(x[i])], axis=0)
         divisor = np.sqrt(np.prod([factorial(n) for n in x + y]))
-        amp = permanent(matrix) / divisor
-        return amp
+        return permanent(matrix) / divisor
+
+    def eval(self, n_photons, permanent=npperm):
+        """
+        >>> for i, _ in enumerate(occupation_numbers(3, 2)): assert np.isclose(
+        ...       sum(np.absolute(MZI(0.2, 0.4).eval(3)[0])**2), 1)
+        """
+        basis = occupation_numbers(n_photons, len(self.dom))
+        matrix = np.zeros(dtype=complex, shape=(len(basis), len(basis)))
+        for i, x in enumerate(basis):
+            for j, y in enumerate(basis):
+                matrix[i, j] = self.amp(x, y, permanent=permanent)
+        return matrix
 
 
 class Box(Diagram, monoidal.Box):
@@ -172,6 +178,9 @@ class PhaseShift(Box):
     def array(self):
         return np.array(np.exp(2j * np.pi * self.phase))
 
+    def dagger(self):
+        return PhaseShift(-self.phase)
+
 
 class BeamSplitter(Box):
     """
@@ -180,6 +189,13 @@ class BeamSplitter(Box):
     Parameters
     ----------
     angle : float
+
+    >>> y = BeamSplitter(0.4)
+    >>> assert np.allclose((y>>y).eval(2), Id(2).eval(2))
+    >>> assert y == y.dagger()
+    >>> comp = (y @ y >> Id(1) @ y @ Id(1)) >> (y @ y >> Id(1) @ y @ Id(1)
+    ...   ).dagger()
+    >>> assert np.allclose(comp.eval(2), Id(4).eval(2))
     """
     def __init__(self, angle):
         self.angle = angle
@@ -189,6 +205,9 @@ class BeamSplitter(Box):
     def array(self):
         cos, sin = np.cos(np.pi * self.angle), np.sin(np.pi * self.angle)
         return np.array([sin, cos, cos, -sin]).reshape((2, 2))
+
+    def dagger(self):
+        return BeamSplitter(self.angle)
 
 
 class MZI(Box):
@@ -216,3 +235,16 @@ class MZI(Box):
 class Functor(monoidal.Functor):
     def __init__(self, ob, ar):
         super().__init__(ob, ar, ob_factory=PRO, ar_factory=Diagram)
+
+
+def occupation_numbers(n_photons, m_modes):
+    """
+    >>> occupation_numbers(3, 2)
+    [[3, 0], [2, 1], [1, 2], [0, 3]]
+    >>> occupation_numbers(2, 3)
+    [[2, 0, 0], [1, 1, 0], [1, 0, 1], [0, 2, 0], [0, 1, 1], [0, 0, 2]]
+    """
+    if m_modes <= 1:
+        return m_modes * [[n_photons]]
+    return [[head] + tail for head in range(n_photons, -1, -1)
+            for tail in occupation_numbers(n_photons - head, m_modes - 1)]
