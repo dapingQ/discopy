@@ -7,25 +7,11 @@ Implements linear optical networks
 import numpy as np
 from scipy.linalg import block_diag
 from math import factorial
+import itertools as it
 
 from discopy import cat, monoidal
 from discopy.monoidal import PRO
 from discopy.tensor import Dim
-
-import itertools as it
-
-def coherent_combination(M,N):
-    """
-        Calculate all the occupation pattern for N photons among M modes
-    """
-    occupation = list(set(it.combinations(np.repeat(np.arange(M),N),N)))
-    out=[]
-    for pattern in occupation:
-        vac = [0]*M
-        for i in pattern:
-            vac[i]+=1
-        out.append(vac)
-    return out
 
 def npperm(M):
     """
@@ -128,7 +114,14 @@ class Diagram(monoidal.Diagram):
         divisor = np.sqrt(np.prod([factorial(n) for n in x + y]))
         return permanent(matrix) / divisor
 
-    def amp_distinguish(self, x, y):
+    def prob_boson(self, x, y):
+        """
+        Evaluate the probability of amp method 
+        to be consistent with other three sampling mothods
+        """
+        return np.absolute(self.amp(x=x, y=y, permanent=npperm))**2
+
+    def prob_distinguish(self, x, y):
         """
         Evaluates the probability of an optics.Diagram on input x and output y,
         where x and y are lists of natural numbers summing to DISTINGUISHABLE n_photons. 
@@ -164,7 +157,7 @@ class Diagram(monoidal.Diagram):
         pio=p
         return(pio)  
             
-    def amp_classical(self, x, y, permanent=npperm):
+    def prob_classical(self, x, y, permanent=npperm):
         """
         Evaluates the light intensity rate at the output of an optics.Diagram, when sending incoherent light on input x and 
         measuring the intensity on output y.
@@ -203,24 +196,36 @@ class Diagram(monoidal.Diagram):
         u=u/n_photons
         return(u)  
         
-    def amp_coherent(self, x, y):
+    def prob_coherent(self, x, y):
         """
-        Evaluate the amplitude from input mode x to output y, select and add up the non-zero mode of y 
+        Evaluate the coherent transmission probability from input mode x to output mode y 
+        as a sum of boson sampling possibilities of occupation patterns that overlap with output mode y.
+        e.g. 
+        if y = [1,0,1,0]
+        pp = {
+            [1, 1, 0, 0],
+            [0, 1, 1, 0],
+            [2, 0, 0, 0],
+            [1, 0, 0, 1],
+            [0, 0, 1, 1],
+            [1, 0, 1, 0],
+            [0, 0, 2, 0]
+            }
+        which means except the pattern whose inner product with y is zero.
+
         Parameters
         ----------
         x : List[int]
-            0 means no light is being injected, 1 means a light beam is being injected, e.g. [1,1,0,0] means I am
-            sending light from mode 1 and 2
+            Input vector of occupation numbers
         y : List[int]
-            0 means I am not measuring on that output mode, 1 means I am measuring intensity there, e.g. [1,1,0,0] means I am
-            measuring light intensities from mode 1 and 2
+            Output vector of occupation numbers
         """
         assert sum(x) == sum(y)
         n_photons = sum(x)
-        unitary = self.array
         out=0
-        for pp in coherent_combination(len(self.dom), n_photons):
-            out+=self.amp(x=x, y=pp)
+        for pp in occupation_numbers_vienna( n_photons=n_photons, m_modes= len(self.dom)):
+            if np.inner(y, pp) != 0:
+                out += self.prob_boson(x=x, y=pp)
         return out
 
     def eval(self, n_photons, permanent=npperm):
@@ -358,3 +363,17 @@ def occupation_numbers(n_photons, m_modes):
     return [[head] + tail for head in range(n_photons, -1, -1)
             for tail in occupation_numbers(n_photons - head, m_modes - 1)]
 
+def occupation_numbers_vienna(n_photons,m_modes):
+    """
+    Calculate all the occupation patterns for N photons among M modes
+    """
+    occupation = list(set(
+        it.combinations(np.repeat(np.arange(m_modes),n_photons), n_photons)
+        ))
+    out=[]
+    for pattern in occupation:
+        vac = [0]*m_modes
+        for i in pattern:
+            vac[i]+=1
+        out.append(vac)
+    return out
