@@ -275,7 +275,6 @@ class Id(monoidal.Id, Diagram):
 
 Diagram.id = Id
 
-
 class PhaseShift(Box):
     """
     Phase shifter
