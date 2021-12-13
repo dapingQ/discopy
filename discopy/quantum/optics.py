@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Implements linear optical networks
+Implements linear optics
 """
 
 import numpy as np
@@ -61,8 +61,6 @@ class Diagram(monoidal.Diagram):
     and Mach-Zender interferometers.
 
     >>> grid = MZI(0.5, 0.3) @ MZI(0.5, 0.3) >> Id(1) @ MZI(0.5, 0.3) @ Id(1)
-    >>> np.absolute(grid.amp([1, 3, 2, 1], [1, 3, 3, 0]))
-    0.06492701974296845
     >>> assert np.allclose((grid >> grid.dagger()).eval(3), Id(4).eval(3))
     """
     def __repr__(self):
@@ -75,17 +73,15 @@ class Diagram(monoidal.Diagram):
         Builds a block diagonal matrix for each layer and then multiplies them
         in sequence.
 
-        >>> MZI(0, 0).array
-        array([[ 0.+0.j,  1.+0.j],
-               [ 1.+0.j, -0.+0.j]])
-        >>> (MZI(0, 0) >> MZI(0, 0)).array
-        array([[1.+0.j, 0.+0.j],
-               [0.+0.j, 1.+0.j]])
-        >>> (MZI(0, 0) @ MZI(0, 0)).array
-        array([[0.+0.j, 1.+0.j, 0.+0.j, 0.+0.j],
-               [1.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
-               [0.+0.j, 0.+0.j, 0.+0.j, 1.+0.j],
-               [0.+0.j, 0.+0.j, 1.+0.j, 0.+0.j]])
+        >>> BS = BeamSplitter(0.5)
+        >>> np.shape(BS.array)
+        (2, 2)
+        >>> np.shape((BS >> BS).array)
+        (2, 2)
+        >>> np.shape((BS @ BS @ BS).array)
+        (6, 6)
+        >>> assert np.allclose(MZI(0, 0).array, np.array([0, 1], [1, 0])
+        >>> assert np.allclose((MZI(0, 0) >> MZI(0, 0)).array, Id(2).array)
         """
         scan, array = self.dom, np.identity(len(self.dom))
         for box, off in zip(self.boxes, self.offsets):
@@ -107,7 +103,7 @@ class Diagram(monoidal.Diagram):
             Output vector of occupation numbers
         permanent : callable, optional
             Use another function for computing the permanent
-            (e.g. from thewalrus)
+            or set permanent = np.determinant to compute fermionic statistics
 
         >>> network = MZI(0.2, 0.4) @ MZI(0.2, 0.4)\
                       >> Id(1) @ MZI(0.2, 0.4) @ Id(1)
@@ -154,10 +150,10 @@ class Diagram(monoidal.Diagram):
                 matrix[i, j] = self.amp(x, y, permanent=permanent)
         return matrix
 
-    def D_prob(self, x, y, permanent=npperm):
+    def indist_prob(self, x, y, permanent=npperm):
         """
-        Evaluates probability of an optics.Diagram for input x and output y,
-        when sending DISTINGUISHABLE photons.
+        Evaluates the probability for indistinguishable bosons by taking
+        the born rule of the amplitude.
 
         Parameters
         ----------
@@ -170,14 +166,37 @@ class Diagram(monoidal.Diagram):
             (e.g. from thewalrus)
 
         >>> box = MZI(1.2, 0.6)
-        >>> assert np.isclose(sum([box.D_prob([3, 0], y)
+        >>> assert np.isclose(sum([box.indist_prob([3, 0], y)
         ...                        for y in occupation_numbers(3, 2)]), 1)
         >>> network = box @ box @ box >> Id(1) @ box @ box @ Id(1)
-        >>> assert np.isclose(sum([network.D_prob([0, 1, 0, 1, 1, 1], y)
+        >>> assert np.isclose(sum([network.indist_prob([0, 1, 0, 1, 1, 1], y)
+        ...                        for y in occupation_numbers(4, 6)]), 1)
+        """
+        return np.absolute(self.amp(x, y, permanent=permanent)) ** 2
+
+    def dist_prob(self, x, y, permanent=npperm):
+        """
+        Evaluates probability of an optics.Diagram for input x and output y,
+        when sending distinguishable particles.
+
+        Parameters
+        ----------
+        x : List[int]
+            Input vector of occupation numbers
+        y : List[int]
+            Output vector of occupation numbers
+        permanent : callable, optional
+            Use another function for computing the permanent
+            (e.g. from thewalrus)
+
+        >>> box = MZI(1.2, 0.6)
+        >>> assert np.isclose(sum([box.dist_prob([3, 0], y)
+        ...                        for y in occupation_numbers(3, 2)]), 1)
+        >>> network = box @ box @ box >> Id(1) @ box @ box @ Id(1)
+        >>> assert np.isclose(sum([network.dist_prob([0, 1, 0, 1, 1, 1], y)
         ...                        for y in occupation_numbers(4, 6)]), 1)
         """
         n_modes = len(self.dom)
-        unitary = self.array
         if sum(x) != sum(y):
             return 0
         matrix = np.stack([self.array[:, i] for i in range(n_modes)
@@ -186,6 +205,50 @@ class Diagram(monoidal.Diagram):
                           for _ in range(x[i])], axis=0)
         divisor = np.prod([factorial(n) for n in y])
         return permanent(np.absolute(matrix)**2) / divisor
+
+    def pdist_prob(self, x, y, S, permanent=npperm):
+        """
+        Calculates the probabilities for partially distinguishable photons.
+
+        Parameters
+        ----------
+        x : List[int]
+            Input vector of occupation numbers
+        y : List[int]
+            Output vector of occupation numbers
+        S : np.array
+            Symmetric matrix of mutual distinguishabilities
+            of shape (n_photons, n_photons)
+        permanent : callable, optional
+            Use another function for computing the permanent
+
+        Check Hong-Ou-Mandel
+        >>> BS = BeamSplitter(0.5)
+        >>> x = [1, 1]
+        >>> S = np.eye(2)
+        >>> assert np.isclose(BS.pdist_prob(x, x, S), 0.5)
+        >>> S = np.ones((2, 2))
+        >>> assert np.isclose(BS.pdist_prob(x, x, S), 0.0)
+        >>> S = lambda p: np.array([[1, p], [p, 1]])
+        >>> for p in [0.1*x for x in range(11)]:
+        ...     assert np.isclose(BS.pdist_prob(x, x, S(p)), 0.5 * (1 - p **2))
+        """
+        n_modes = len(self.dom)
+        n_photons = sum(x)
+        if sum(x) != sum(y):
+            return 0
+        matrix = np.stack([self.array[:, i] for i in range(n_modes)
+                          for _ in range(y[i])], axis=1)
+        matrix = np.stack([matrix[i] for i in range(n_modes)
+                          for _ in range(x[i])], axis=0)
+        photons = list(range(n_photons))
+        prob = 0
+        for sigma in permutations(photons):
+            for rho in permutations(photons):
+                prob += np.prod([matrix[sigma[j], j]
+                                 * np.conjugate(matrix[rho[j], j])
+                                 * S[rho[j], sigma[j]] for j in photons])
+        return prob
 
     def cl_distribution(self, x):
         """
@@ -228,7 +291,7 @@ class Box(Diagram, monoidal.Box):
 
     @property
     def array(self):
-        """ The array inside the box. """
+        """ The array or unitary inside the box. """
         return np.array(self.data).reshape(
             Dim(len(self.dom)) @ Dim(len(self.cod)) or (1, ))
 
@@ -344,5 +407,54 @@ class MZI(Box):
 
 
 class Functor(monoidal.Functor):
+    """ Can be used for catching lions """
     def __init__(self, ob, ar):
         super().__init__(ob, ar, ob_factory=PRO, ar_factory=Diagram)
+
+
+def params_shape(width, depth):
+    """ Returns the shape of parameters given width and depth. """
+    even_width = not width % 2
+    even_depth = not depth % 2
+    if even_width:
+        if even_depth:
+            # we have width // 2 MZIs on the first row
+            # followed by width // 2 - 1 equals width - 1
+            return (depth // 2, width - 1, 2)
+        else:
+            # we have the parameters for even depths plus
+            # a last layer of width // 2 MZIs
+            return (depth // 2 * (width - 1) + width // 2, 2)
+    else:
+        # we have width // 2 MZIs on each row, where
+        # the even layers are tensored by Id on the right
+        # and the odd layers are tensored on the left.
+        return (depth, width // 2, 2)
+
+
+def ansatz(width, depth, x):
+    """ Returns an array of MZIs given width, depth and parameters x"""
+    params = x.reshape(params_shape(width, depth))
+    chip = Id(width)
+    if not width % 2:
+        if depth % 2:
+            params, last_layer = params[:-width // 2].reshape(
+                params_shape(width, depth - 1)), params[-width // 2:]
+        for i in range(depth // 2):
+            chip = chip\
+                >> Id().tensor(*[
+                    MZI(*params[i, j])
+                    for j in range(width // 2)])\
+                >> Id(1) @ Id().tensor(*[
+                    MZI(*params[i, j + width // 2])
+                    for j in range(width // 2 - 1)]) @ Id(1)
+        if depth % 2:
+            chip = chip >> Id().tensor(*[
+                MZI(*last_layer[j]) for j in range(width // 2)])
+    else:
+        for i in range(depth):
+            left, right = (Id(1), Id()) if i % 2 else (Id(), Id(1))
+            chip >>= left.tensor(*[
+                MZI(*params[i, j])
+                for j in range(width // 2)]) @ right
+    return chip
