@@ -89,6 +89,16 @@ class Diagram(monoidal.Diagram):
             array = np.matmul(array, block_diag(np.identity(left), box.array,
                                                 np.identity(right)))
         return array
+    
+    def element(self, x, y, n_modes):
+        """
+        Retrieve the matrix elements of an optics.Diagram
+        """
+        matrix = np.stack([self.array[:, i] for i in range(n_modes)
+                          for _ in range(y[i])], axis=1)
+        matrix = np.stack([matrix[i] for i in range(n_modes)
+                          for _ in range(x[i])], axis=0)
+        return matrix
 
     def amp(self, x, y, permanent=npperm):
         """
@@ -272,7 +282,38 @@ class Diagram(monoidal.Diagram):
         array([0.4267767, 0.0732233, 0.0732233, 0.4267767])
         """
         return np.matmul(np.absolute(self.array)**2, np.array(x))
+        
+    def prob_coherent(self, x, y):
+        """
+        Evaluate the coherent transmission probability from input mode x to output mode y 
+        as a sum of boson sampling possibilities of occupation patterns that overlap with output mode y.
+        e.g. 
+        if y = [1,0,1,0]
+        pp = {
+            [1, 1, 0, 0],
+            [0, 1, 1, 0],
+            [2, 0, 0, 0],
+            [1, 0, 0, 1],
+            [0, 0, 1, 1],
+            [1, 0, 1, 0],
+            [0, 0, 2, 0]
+            }
+        which means except the pattern whose inner product with y is zero.
 
+        Parameters
+        ----------
+        x : List[int]
+            Input vector of occupation numbers
+        y : List[int]
+            Output vector of occupation numbers
+        """
+        assert sum(x) == sum(y)
+        n_photons = sum(x)
+        out=0
+        for pp in occupation_numbers_vienna( n_photons=n_photons, m_modes= len(self.dom)):
+            if np.inner(y, pp) != 0:
+                out += self.prob_boson(x=x, y=pp)
+        return out
 
 class Box(Diagram, monoidal.Box):
     """
