@@ -121,6 +121,42 @@ class Diagram(monoidal.Diagram):
         """
         return np.absolute(self.amp(x=x, y=y, permanent=npperm))**2
 
+    def amp_dist(self, x, y):
+        """
+        Evaluates the amplitude of an optics.Diagram on input x and output y,
+        where x and y are lists of natural numbers summing to DISTINGUISHABLE n_photons. 
+
+        Parameters
+        ----------
+        x : List[int]
+            Input vector of occupation numbers
+        y : List[int]
+            Output vector of occupation numbers
+        """
+        n_modes = len(self.dom)
+        unitary = self.array
+        if sum(x) != sum(y):
+            return 0
+        i=[]
+        o=[]
+        for xx in range(len(x)):
+            if x[xx] > 0:
+                for z in range(x[xx]):
+                    i.append(xx)
+        for xx in range(len(y)):
+            if y[xx] > 0:
+                for z in range(y[xx]):
+                    o.append(xx)        
+        p=0;
+        pm=list(set(it.permutations(o)));
+        for kk in range(len(pm)):
+            u=1;
+            for k in range(len(i)):
+                u*=abs(unitary[i[k], pm[kk][k]])**2;
+            p+=u;   
+        pio=p
+        return(pio)  
+
     def prob_distinguish(self, x, y):
         """
         Evaluates the probability of an optics.Diagram on input x and output y,
@@ -155,7 +191,7 @@ class Diagram(monoidal.Diagram):
                 u*=abs(unitary[i[k], pm[kk][k]])**2;
             p+=u;   
         pio=p
-        return(pio)  
+        return(pio) 
             
     def prob_classical(self, x, y, permanent=npperm):
         """
